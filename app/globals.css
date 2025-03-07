@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --radius: 0.5rem;
+}
+
+body {
+  font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+.dark .react-calendar {
+  @apply bg-[#181825] text-[#cdd6f4] border-[#313244];
+}
+
+.dark .react-calendar__tile--now {
+  @apply bg-[#313244] text-[#cdd6f4];
+}
+
+.dark .react-calendar__tile--active,
+.dark .react-calendar__tile:enabled:hover,
+.dark .react-calendar__tile:enabled:focus {
+  @apply bg-[#cba6f7] text-[#1e1e2e];
+}
+
+.dark .react-calendar__navigation button:enabled:hover,
+.dark .react-calendar__navigation button:enabled:focus {
+  @apply bg-[#313244];
+}
+
