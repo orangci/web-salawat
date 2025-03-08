@@ -1,54 +1,66 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Calendar } from "@/components/ui/calendar"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { MapPin, CalendarIcon, Settings } from "lucide-react"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { format, addMinutes } from "date-fns"
+import { format, addMinutes, addDays } from "date-fns"
 import { cn } from "@/lib/utils"
+import { ThemeSelector } from "@/components/theme-selector"
+import { LanguageSelector } from "@/components/language-selector"
+import { LocationSearch } from "@/components/location-search"
+import { useTheme } from "@/contexts/theme-context"
+import { useLanguage } from "@/contexts/language-context"
 
 export default function Home() {
+  const { theme } = useTheme()
+  const { t, language, dir } = useLanguage()
   const [date, setDate] = useState<Date>(new Date())
-  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [location, setLocation] = useState<{ lat: number; lng: number; timezone?: string } | null>(null)
   const [locationName, setLocationName] = useState<string>("")
-  const [calculationMethod, setCalculationMethod] = useState<string>("3") // Default to Umm al-Qura
   const [prayerTimes, setPrayerTimes] = useState<any>(null)
   const [loading, setLoading] = useState<boolean>(true)
   const [upcomingPrayer, setUpcomingPrayer] = useState<string>("")
   const [countdown, setCountdown] = useState<string>("")
   const [countdownType, setCountdownType] = useState<"adhan" | "iqama">("adhan")
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [hoveredPrayer, setHoveredPrayer] = useState<string | null>(null)
+  const [hoveredCountdown, setHoveredCountdown] = useState<string>("")
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
+  const [locationChanged, setLocationChanged] = useState(0) // Counter to force re-renders
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const locationRef = useRef<{ lat: number; lng: number; timezone?: string } | null>(null)
 
-  const calculationMethods = [
-    { id: "0", name: "Shia Ithna-Ashari" },
-    { id: "1", name: "University of Islamic Sciences, Karachi" },
-    { id: "2", name: "Islamic Society of North America" },
-    { id: "3", name: "Umm al-Qura University, Makkah" },
-    { id: "4", name: "Egyptian General Authority of Survey" },
-    { id: "5", name: "Institute of Geophysics, University of Tehran" },
-    { id: "7", name: "Muslim World League" },
-    { id: "8", name: "Gulf Region" },
-    { id: "9", name: "Kuwait" },
-    { id: "10", name: "Qatar" },
-    { id: "11", name: "Singapore" },
-    { id: "12", name: "Turkey" },
-    { id: "13", name: "Other" },
-  ]
+  // Update locationRef when location changes
+  useEffect(() => {
+    locationRef.current = location
+  }, [location])
 
   // Get user location from browser
-  const getUserLocation = () => {
+  const getUserLocation = useCallback(() => {
     setLoading(true)
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           const { latitude, longitude } = position.coords
-          setLocation({ lat: latitude, lng: longitude })
-
-          // Get location name from coordinates
+          // Get timezone from coordinates
           try {
+            const tzResponse = await fetch(
+              `https://api.timezonedb.com/v2.1/get-time-zone?key=2PFF2XVAP7AW&format=json&by=position&lat=${latitude}&lng=${longitude}`,
+            ).then((res) => res.json())
+
+            // Clear any existing interval before changing location
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current)
+              intervalRef.current = null
+            }
+
+            setLocation({ lat: latitude, lng: longitude, timezone: tzResponse.zoneName })
+            setLocationChanged((prev) => prev + 1) // Force re-render
+
+            // Get location name from coordinates
             const response = await fetch(
               `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`,
             )
@@ -60,7 +72,8 @@ export default function Home() {
               `${city}${city && state ? ", " : ""}${state}${(city || state) && country ? ", " : ""}${country}`,
             )
           } catch (error) {
-            console.error("Error fetching location name:", error)
+            console.error("Error fetching location data:", error)
+            setLocation({ lat: latitude, lng: longitude })
             setLocationName("Unknown Location")
           }
         },
@@ -74,14 +87,22 @@ export default function Home() {
       // Fallback to IP-based location if geolocation is not supported
       getIPLocation()
     }
-  }
+  }, [])
 
   // Get location from IP address
-  const getIPLocation = async () => {
+  const getIPLocation = useCallback(async () => {
     try {
       const response = await fetch("https://ipapi.co/json/")
       const data = await response.json()
-      setLocation({ lat: data.latitude, lng: data.longitude })
+
+      // Clear any existing interval before changing location
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+
+      setLocation({ lat: data.latitude, lng: data.longitude, timezone: data.timezone })
+      setLocationChanged((prev) => prev + 1) // Force re-render
       setLocationName(`${data.city}, ${data.region}, ${data.country_name}`)
     } catch (error) {
       console.error("Error getting IP location:", error)
@@ -89,17 +110,52 @@ export default function Home() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  // Handle location selection from search
+  const handleLocationSelect = useCallback(async (selectedLocation: { lat: number; lng: number; name: string }) => {
+    try {
+      // Get timezone for the selected location
+      const tzResponse = await fetch(
+        `https://api.timezonedb.com/v2.1/get-time-zone?key=2PFF2XVAP7AW&format=json&by=position&lat=${selectedLocation.lat}&lng=${selectedLocation.lng}`,
+      ).then((res) => res.json())
+
+      // Clear any existing interval before changing location
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+
+      // Reset states related to prayer times
+      setUpcomingPrayer("")
+      setCountdown("")
+      setPrayerTimes(null)
+
+      // Update location
+      setLocation({
+        lat: selectedLocation.lat,
+        lng: selectedLocation.lng,
+        timezone: tzResponse.zoneName,
+      })
+      setLocationChanged((prev) => prev + 1) // Force re-render
+      setLocationName(selectedLocation.name)
+    } catch (error) {
+      console.error("Error getting timezone for location:", error)
+      setLocation({ lat: selectedLocation.lat, lng: selectedLocation.lng })
+      setLocationName(selectedLocation.name)
+    }
+  }, [])
 
   // Fetch prayer times
-  const fetchPrayerTimes = async () => {
+  const fetchPrayerTimes = useCallback(async () => {
     if (!location) return
 
     setLoading(true)
     try {
       const formattedDate = format(date, "dd-MM-yyyy")
+      // Using method 3 (Umm al-Qura) by default
       const response = await fetch(
-        `https://api.aladhan.com/v1/timings/${formattedDate}?latitude=${location.lat}&longitude=${location.lng}&method=${calculationMethod}`,
+        `https://api.aladhan.com/v1/timings/${formattedDate}?latitude=${location.lat}&longitude=${location.lng}&method=3`,
       )
       const data = await response.json()
       setPrayerTimes(data.data)
@@ -108,58 +164,136 @@ export default function Home() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [location, date])
 
   // Calculate Iqama times (typically 15 minutes after Adhan)
-  const calculateIqamaTimes = useCallback(
-    (times: any) => {
-      if (!times) return {}
+  const calculateIqamaTimes = useCallback((times: any) => {
+    if (!times) return {}
 
-      const iqamaTimes: Record<string, Date> = {}
-      const prayerNames = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+    const iqamaTimes: Record<string, Date> = {}
+    const prayerNames = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+    const now = getLocationAdjustedTime()
 
-      prayerNames.forEach((prayer) => {
-        if (times.timings && times.timings[prayer]) {
-          const [hours, minutes] = times.timings[prayer].split(":").map(Number)
-          const adhanTime = new Date(date)
-          adhanTime.setHours(hours, minutes, 0, 0)
-          iqamaTimes[prayer] = addMinutes(adhanTime, 15)
-        }
+    prayerNames.forEach((prayer) => {
+      if (times.timings && times.timings[prayer]) {
+        const [hours, minutes] = times.timings[prayer].split(":").map(Number)
+
+        // Create a date object for the prayer time using the location's date
+        const adhanTime = new Date(now)
+        adhanTime.setHours(hours, minutes, 0, 0)
+
+        iqamaTimes[prayer] = addMinutes(adhanTime, 15)
+      }
+    })
+
+    return iqamaTimes
+  }, [])
+
+  // Get current time adjusted for selected location's timezone
+  const getLocationAdjustedTime = useCallback(() => {
+    const loc = locationRef.current
+    if (!loc?.timezone) return new Date()
+
+    try {
+      const now = new Date()
+
+      // Get current time components in the location's timezone
+      const options = { timeZone: loc.timezone, hour12: false } as Intl.DateTimeFormatOptions
+      const timeString = now.toLocaleTimeString("en-US", options)
+      const dateString = now.toLocaleDateString("en-US", {
+        timeZone: loc.timezone,
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
       })
 
-      return iqamaTimes
+      // Parse the date and time strings
+      const [month, day, year] = dateString.split("/").map(Number)
+      const [hours, minutes, seconds] = timeString.split(":").map(Number)
+
+      // Create a new date with the location's date and time
+      const adjustedTime = new Date(year, month - 1, day, hours, minutes, seconds)
+
+      return adjustedTime
+    } catch (error) {
+      console.error("Error adjusting time for location:", error)
+      return new Date()
+    }
+  }, [])
+
+  // Format countdown time from difference in milliseconds
+  const formatCountdown = (diffMs: number) => {
+    if (diffMs <= 0) return "00:00:00"
+
+    const hours = Math.floor(diffMs / (1000 * 60 * 60))
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
+    const seconds = Math.floor((diffMs % (1000 * 60)) / 1000)
+
+    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+  }
+
+  // Calculate countdown to a specific prayer
+  const calculateCountdownToPrayer = useCallback(
+    (prayer: string, isIqama = false) => {
+      if (!prayerTimes || !prayerTimes.timings) return "00:00:00"
+
+      const now = getLocationAdjustedTime()
+      const [hours, minutes] = prayerTimes.timings[prayer].split(":").map(Number)
+
+      // Create a date object for the prayer time using the same date as the adjusted time
+      let prayerTime = new Date(now)
+      prayerTime.setHours(hours, minutes, 0, 0)
+
+      // If it's for iqama, add 15 minutes
+      if (isIqama) {
+        prayerTime = addMinutes(prayerTime, 15)
+      }
+
+      // If the prayer time has already passed today, use tomorrow's time
+      if (prayerTime < now) {
+        prayerTime = addDays(prayerTime, 1)
+      }
+
+      const diffMs = prayerTime.getTime() - now.getTime()
+      return formatCountdown(diffMs)
     },
-    [date],
+    [prayerTimes, getLocationAdjustedTime],
   )
 
   // Determine upcoming prayer and update countdown
   const updateUpcomingPrayerAndCountdown = useCallback(() => {
     if (!prayerTimes || !prayerTimes.timings) return
 
-    const now = new Date()
+    const now = getLocationAdjustedTime()
     const prayers = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
     const prayerTimesObj: Record<string, Date> = {}
     const iqamaTimesObj = calculateIqamaTimes(prayerTimes)
 
     // Convert prayer times to Date objects
     prayers.forEach((prayer) => {
-      const [hours, minutes] = prayerTimes.timings[prayer].split(":").map(Number)
-      const prayerTime = new Date(now)
-      prayerTime.setHours(hours, minutes, 0, 0)
-      prayerTimesObj[prayer] = prayerTime
+      if (prayerTimes.timings[prayer]) {
+        const [hours, minutes] = prayerTimes.timings[prayer].split(":").map(Number)
+
+        const prayerTime = new Date(now) // Use the same date as the adjusted time
+        prayerTime.setHours(hours, minutes, 0, 0)
+
+        prayerTimesObj[prayer] = prayerTime
+      }
     })
 
     // Add tomorrow's Fajr
-    const tomorrowFajr = new Date(now)
-    tomorrowFajr.setDate(tomorrowFajr.getDate() + 1)
-    const [fajrHours, fajrMinutes] = prayerTimes.timings.Fajr.split(":").map(Number)
-    tomorrowFajr.setHours(fajrHours, fajrMinutes, 0, 0)
-    prayerTimesObj["TomorrowFajr"] = tomorrowFajr
-    iqamaTimesObj["TomorrowFajr"] = addMinutes(tomorrowFajr, 15)
+    if (prayerTimes.timings.Fajr) {
+      const [fajrHours, fajrMinutes] = prayerTimes.timings.Fajr.split(":").map(Number)
+      const tomorrowFajr = addDays(new Date(now), 1) // Use the adjusted time's date
+      tomorrowFajr.setHours(fajrHours, fajrMinutes, 0, 0)
+
+      prayerTimesObj["TomorrowFajr"] = tomorrowFajr
+      iqamaTimesObj["TomorrowFajr"] = addMinutes(tomorrowFajr, 15)
+    }
 
     // Find upcoming prayer
     let upcoming = ""
-    let targetTime: Date
+    let targetTime: Date = now
     let isIqama = false
 
     for (let i = 0; i < prayers.length; i++) {
@@ -188,47 +322,80 @@ export default function Home() {
     setCountdownType(isIqama ? "iqama" : "adhan")
 
     // Calculate countdown
-    const diff = targetTime.getTime() - now.getTime()
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+    const diffMs = targetTime.getTime() - now.getTime()
+    setCountdown(formatCountdown(diffMs))
 
-    setCountdown(
-      `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
-    )
-  }, [prayerTimes, calculateIqamaTimes])
+    // Update hovered countdown if a prayer is being hovered
+    if (hoveredPrayer) {
+      setHoveredCountdown(calculateCountdownToPrayer(hoveredPrayer))
+    }
+  }, [prayerTimes, calculateIqamaTimes, getLocationAdjustedTime, hoveredPrayer, calculateCountdownToPrayer])
 
   // Initialize with IP location on component mount
   useEffect(() => {
     getIPLocation()
-  }, [])
 
-  // Fetch prayer times when location, date, or calculation method changes
+    // Clean up interval on unmount
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+    }
+  }, [getIPLocation])
+
+  // Fetch prayer times when location or date changes
   useEffect(() => {
     if (location) {
       fetchPrayerTimes()
     }
-  }, [location, date, calculationMethod])
+  }, [location, date, fetchPrayerTimes, locationChanged])
 
   // Update upcoming prayer and countdown every second
   useEffect(() => {
     if (!prayerTimes) return
 
+    // Clear any existing interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+    }
+
+    // Initial update
     updateUpcomingPrayerAndCountdown()
-    const interval = setInterval(() => {
+
+    // Set up interval for updates
+    intervalRef.current = setInterval(() => {
       updateUpcomingPrayerAndCountdown()
     }, 1000)
 
-    return () => clearInterval(interval)
-  }, [prayerTimes, updateUpcomingPrayerAndCountdown])
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+    }
+  }, [prayerTimes, updateUpcomingPrayerAndCountdown, location, locationChanged])
 
   const formatDate = (date: Date, hijriDate: any) => {
-    const gregorian = format(date, "do MMMM yyyy")
-    const hijri = `${hijriDate.day}${getOrdinalSuffix(hijriDate.day)} ${hijriDate.month.en} ${hijriDate.year}`
-    return `${gregorian} — ${hijri}`
+    // Format Gregorian date: 8th March 2025
+    const gregorianDate = format(date, "do MMMM yyyy")
+
+    // Format Hijri date: 8th Ramaḍān 1446 AH
+    // Add ordinal suffix to the day
+    const hijriDay = `${hijriDate.day}${getOrdinalSuffix(hijriDate.day)}`
+    const hijriMonth = hijriDate.month.en
+    const hijriYear = hijriDate.year
+    const hijriDateStr = `${hijriDay} ${hijriMonth} ${hijriYear} AH`
+
+    // Combine with em dash
+    return (
+      <div className="flex flex-col">
+        <span>{`${gregorianDate} — ${hijriDateStr}`}</span>
+      </div>
+    )
   }
 
   const getOrdinalSuffix = (day: number) => {
+    if (language === "ar") return ""
+
     const j = day % 10,
       k = day % 100
     if (j == 1 && k != 11) {
@@ -243,107 +410,158 @@ export default function Home() {
     return "th"
   }
 
+  const getPrayerNameTranslation = (prayer: string) => {
+    const key = prayer.toLowerCase()
+    return t(key)
+  }
+
+  // Handle date change
+  const handleDateChange = (newDate: Date | undefined) => {
+    if (newDate) {
+      setDate(newDate)
+      setIsDatePickerOpen(false)
+    }
+  }
+
+  // Handle prayer card hover
+  const handlePrayerHover = (prayer: string | null) => {
+    setHoveredPrayer(prayer)
+    if (prayer) {
+      setHoveredCountdown(calculateCountdownToPrayer(prayer))
+    }
+  }
+
+  // Toggle date picker dialog
+  const toggleDatePicker = () => {
+    setIsDatePickerOpen(!isDatePickerOpen)
+  }
+
   return (
-    <main className="min-h-screen bg-[#1e1e2e] text-[#cdd6f4] p-4 md:p-8 flex flex-col">
+    <main
+      className="min-h-screen p-4 md:p-8 flex flex-col"
+      style={{ backgroundColor: "var(--background)", color: "var(--foreground)" }}
+      dir={dir}
+    >
       <div className="max-w-5xl mx-auto flex-grow w-full">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-4xl font-bold text-[#cba6f7]">Salawat</h1>
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="ghost" size="icon">
-                <Settings className="h-5 w-5" />
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-[#181825] border-[#313244] text-[#cdd6f4]">
-              <DialogHeader>
-                <DialogTitle className="text-[#f5c2e7]">Settings</DialogTitle>
-              </DialogHeader>
-              <div className="flex flex-col gap-4 mt-4">
-                <div className="flex flex-col gap-2">
-                  <label className="text-[#a6adc8] text-sm">Location</label>
-                  <div className="text-[#cdd6f4] flex items-center gap-2">
-                    <MapPin className="h-4 w-4" />
-                    {locationName || "Detecting location..."}
-                  </div>
-                  <Button onClick={getUserLocation} className="bg-[#cba6f7] hover:bg-[#b4befe] text-[#1e1e2e] mt-2">
-                    Update Location
-                  </Button>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-[#a6adc8] text-sm">Date</label>
-                  <Popover>
-                    <PopoverTrigger asChild>
+          <h1 className="text-4xl font-bold" style={{ color: "var(--primary)" }}>
+            {t("appTitle")}
+          </h1>
+          <div className="flex items-center gap-2">
+            <LanguageSelector />
+            <ThemeSelector />
+            <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <Settings className="h-5 w-5" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent
+                style={{
+                  backgroundColor: "var(--card)",
+                  color: "var(--card-foreground)",
+                  borderColor: "var(--border)",
+                }}
+              >
+                <DialogHeader>
+                  <DialogTitle style={{ color: "var(--primary)" }}>{t("settings")}</DialogTitle>
+                </DialogHeader>
+                <div className="flex flex-col gap-4 mt-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4" />
+                      {locationName || t("detectingLocation")}
+                    </div>
+                    <div className="flex gap-2 mt-2">
                       <Button
-                        variant="outline"
-                        className="w-full justify-start text-left font-normal bg-[#313244] border-[#45475a] text-[#cdd6f4]"
+                        onClick={getUserLocation}
+                        style={{ backgroundColor: "var(--primary)", color: "var(--primary-foreground)" }}
                       >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {date ? format(date, "PPP") : <span>Pick a date</span>}
+                        {t("updateLocation")}
                       </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0 bg-[#181825] border-[#313244]">
-                      <Calendar
-                        mode="single"
-                        selected={date}
-                        onSelect={(date) => date && setDate(date)}
-                        initialFocus
-                        className="bg-[#181825] text-[#cdd6f4]"
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
+                      <LocationSearch onLocationSelect={handleLocationSelect} />
+                    </div>
+                  </div>
 
-                <div className="flex flex-col gap-2">
-                  <label className="text-[#a6adc8] text-sm">Calculation Method</label>
-                  <Select value={calculationMethod} onValueChange={setCalculationMethod}>
-                    <SelectTrigger className="w-full bg-[#313244] border-[#45475a] text-[#cdd6f4]">
-                      <SelectValue placeholder="Select calculation method" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-[#181825] border-[#313244] text-[#cdd6f4]">
-                      {calculationMethods.map((method) => (
-                        <SelectItem
-                          key={method.id}
-                          value={method.id}
-                          className="focus:bg-[#313244] focus:text-[#cdd6f4]"
+                  <div className="flex flex-col gap-2">
+                    {/* Date picker button */}
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start text-left font-normal"
+                      style={{ backgroundColor: "var(--input)", borderColor: "var(--border)" }}
+                      onClick={toggleDatePicker}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {date ? format(date, "PPP") : <span>{t("pickDate")}</span>}
+                    </Button>
+
+                    {/* Date picker dialog */}
+                    {isDatePickerOpen && (
+                      <Dialog open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
+                        <DialogContent
+                          className="p-0 max-w-fit"
+                          style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}
                         >
-                          {method.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                          <Calendar
+                            mode="single"
+                            selected={date}
+                            onSelect={handleDateChange}
+                            initialFocus
+                            className="rounded-md border p-3"
+                            style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}
+                          />
+                        </DialogContent>
+                      </Dialog>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
         {/* Countdown to Next Prayer */}
         {prayerTimes && !loading && (
-          <Card className="bg-[#181825] border-[#313244] mb-8">
+          <Card className="mb-8" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
             <CardContent className="pt-6">
               <div className="flex flex-col items-center justify-center">
-                <div className="text-[#a6adc8] mb-2">
-                  Next {countdownType === "adhan" ? "Adhān" : "Iqāma"}: {upcomingPrayer}
+                <div className="mb-2" style={{ color: "var(--card-foreground)" }}>
+                  {hoveredPrayer ? (
+                    <>
+                      {t("nextAdhan")}: {getPrayerNameTranslation(hoveredPrayer)}
+                    </>
+                  ) : (
+                    <>
+                      {countdownType === "adhan" ? t("nextAdhan") : t("nextIqama")}:{" "}
+                      {getPrayerNameTranslation(upcomingPrayer)}
+                    </>
+                  )}
                 </div>
-                <div className="text-5xl font-bold text-[#f9e2af] mb-2 font-mono">{countdown}</div>
+                <div className="text-5xl font-bold mb-2 font-mono" style={{ color: "var(--secondary)" }}>
+                  {hoveredPrayer ? hoveredCountdown : countdown}
+                </div>
               </div>
             </CardContent>
           </Card>
         )}
 
         {/* Prayer Times Display */}
-        <Card className="bg-[#181825] border-[#313244] mb-8">
+        <Card className="mb-8" style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-[#f5c2e7] text-xl">Prayer Times</CardTitle>
-            <CardDescription className="text-[#a6adc8]">
+            <CardTitle className="text-xl" style={{ color: "var(--primary)" }}>
+              {t("prayerTimes")}
+            </CardTitle>
+            <CardDescription style={{ color: "var(--card-foreground)" }}>
               {prayerTimes?.date && formatDate(date, prayerTimes.date.hijri)}
             </CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
               <div className="flex justify-center py-8">
-                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#cba6f7]"></div>
+                <div
+                  className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2"
+                  style={{ borderColor: "var(--primary)" }}
+                ></div>
               </div>
             ) : prayerTimes ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -351,33 +569,46 @@ export default function Home() {
                   <Card
                     key={prayer}
                     className={cn(
-                      "bg-[#313244] border-[#45475a] transition-all duration-300",
-                      upcomingPrayer === prayer && "bg-[#45475a] border-[#cba6f7] shadow-lg",
+                      "transition-all duration-300",
+                      upcomingPrayer === prayer && "border-[var(--primary)] shadow-lg",
                     )}
+                    style={{
+                      backgroundColor: "var(--card)",
+                      borderColor: upcomingPrayer === prayer ? "var(--primary)" : "var(--border)",
+                    }}
+                    onMouseEnter={() => handlePrayerHover(prayer)}
+                    onMouseLeave={() => handlePrayerHover(null)}
                   >
                     <CardContent className="p-4 flex items-center justify-between">
                       <div className="flex items-center">
                         {upcomingPrayer === prayer && (
-                          <div className="w-2 h-2 rounded-full bg-[#cba6f7] mr-2 animate-pulse"></div>
+                          <div
+                            className={cn("w-2 h-2 rounded-full animate-pulse", language === "ar" ? "ml-2" : "mr-2")}
+                            style={{ backgroundColor: "var(--primary)" }}
+                          ></div>
                         )}
-                        <h3
-                          className={cn(
-                            "text-lg font-medium",
-                            upcomingPrayer === prayer ? "text-[#cba6f7]" : "text-[#89b4fa]",
-                          )}
-                        >
-                          {prayer}
+                        <h3 className="text-lg font-medium" style={{ color: "var(--card-foreground)" }}>
+                          {getPrayerNameTranslation(prayer)}
                         </h3>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="text-right">
-                          <p className="text-[#a6adc8] text-xs">Adhān</p>
-                          <p className="text-[#f9e2af] text-base font-medium">{prayerTimes.timings[prayer]}</p>
+                          <p className="text-xs" style={{ color: "var(--card-foreground)" }}>
+                            {t("adhan")}
+                          </p>
+                          <p className="text-base font-medium" style={{ color: "var(--secondary)" }}>
+                            {prayerTimes.timings[prayer]}
+                          </p>
                         </div>
                         <div className="text-right">
-                          <p className="text-[#a6adc8] text-xs">Iqāma</p>
-                          <p className="text-[#a6e3a1] text-base font-medium">
-                            {format(calculateIqamaTimes(prayerTimes)[prayer], "HH:mm")}
+                          <p className="text-xs" style={{ color: "var(--card-foreground)" }}>
+                            {t("iqama")}
+                          </p>
+                          <p
+                            className="text-base font-medium"
+                            style={{ color: theme === "light" ? "#40a02b" : "#a6e3a1" }}
+                          >
+                            {prayerTimes.timings[prayer] && format(calculateIqamaTimes(prayerTimes)[prayer], "HH:mm")}
                           </p>
                         </div>
                       </div>
@@ -386,8 +617,8 @@ export default function Home() {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8 text-[#f38ba8]">
-                Unable to load prayer times. Please check your connection and try again.
+              <div className="text-center py-8" style={{ color: theme === "light" ? "#d20f39" : "#f38ba8" }}>
+                {t("unableToLoad")}
               </div>
             )}
           </CardContent>
@@ -395,10 +626,14 @@ export default function Home() {
       </div>
 
       {/* Footer */}
-      <footer className="mt-8 text-center text-[#a6adc8] text-sm">
-        <p>
-          Made with 💖 by{" "}
-          <a href="https://orangc.net" className="text-[#fab387] hover:underline">
+      <footer className="mt-8 text-center text-sm">
+        <p style={{ color: "var(--card-foreground)" }}>
+          {t("madeWith")} 💖 {t("by")}{" "}
+          <a
+            href="https://orangc.net"
+            style={{ color: theme === "light" ? "#fe640b" : "#fab387" }}
+            className="hover:underline"
+          >
             orangc
           </a>
           .

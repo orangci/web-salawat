@@ -3,11 +3,36 @@
 @tailwind utilities;
 
 :root {
+  --background: #eeeeee;
+  --foreground: #444444;
+  --card: #f8f8f8;
+  --card-foreground: #444444;
+  --primary: #444444;
+  --primary-foreground: #ffffff;
+  --secondary: #666666;
+  --secondary-foreground: #ffffff;
+  --accent: #444444;
+  --accent-foreground: #ffffff;
+  --border: #dddddd;
+  --input: #f0f0f0;
+  --ring: #999999;
   --radius: 0.5rem;
 }
 
-body {
-  font-feature-settings: "rlig" 1, "calt" 1;
+.dark {
+  --background: #1e1e2e;
+  --foreground: #cdd6f4;
+  --card: #181825;
+  --card-foreground: #cdd6f4;
+  --primary: #cba6f7;
+  --primary-foreground: #1e1e2e;
+  --secondary: #f5c2e7;
+  --secondary-foreground: #1e1e2e;
+  --accent: #89b4fa;
+  --accent-foreground: #1e1e2e;
+  --border: #313244;
+  --input: #313244;
+  --ring: #cba6f7;
 }
 
 @layer base {
@@ -19,22 +44,37 @@ body {
   }
 }
 
-.dark .react-calendar {
-  @apply bg-[#181825] text-[#cdd6f4] border-[#313244];
+.react-calendar {
+  background-color: var(--card);
+  color: var(--card-foreground);
+  border-color: var(--border);
 }
 
-.dark .react-calendar__tile--now {
-  @apply bg-[#313244] text-[#cdd6f4];
+.react-calendar__tile--now {
+  background-color: var(--input);
+  color: var(--card-foreground);
 }
 
-.dark .react-calendar__tile--active,
-.dark .react-calendar__tile:enabled:hover,
-.dark .react-calendar__tile:enabled:focus {
-  @apply bg-[#cba6f7] text-[#1e1e2e];
+.react-calendar__tile--active,
+.react-calendar__tile:enabled:hover,
+.react-calendar__tile:enabled:focus {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
 }
 
-.dark .react-calendar__navigation button:enabled:hover,
-.dark .react-calendar__navigation button:enabled:focus {
-  @apply bg-[#313244];
+.react-calendar__navigation button:enabled:hover,
+.react-calendar__navigation button:enabled:focus {
+  background-color: var(--input);
+}
+
+/* RTL support for specific components */
+[dir="rtl"] .mr-2 {
+  margin-right: 0;
+  margin-left: 0.5rem;
+}
+
+[dir="rtl"] .ml-2 {
+  margin-left: 0;
+  margin-right: 0.5rem;
 }
 
