@@ -11,7 +11,7 @@ interface LocationSearchProps {
   onLocationSelect: (location: { lat: number; lng: number; name: string }) => void
 }
 
-export function LocationSearch({ onLocationSelect }: LocationSearchProps) {
+export default function LocationSearch({ onLocationSelect }: LocationSearchProps) {
   const { t, dir } = useLanguage()
   const [searchQuery, setSearchQuery] = useState("")
   const [searchResults, setSearchResults] = useState<any[]>([])
@@ -52,7 +52,7 @@ export function LocationSearch({ onLocationSelect }: LocationSearchProps) {
           <span>{t("searchLocation")}</span>
         </Button>
       </DialogTrigger>
-      <DialogContent dir={dir}>
+      <DialogContent dir={dir} className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t("searchForLocation")}</DialogTitle>
         </DialogHeader>

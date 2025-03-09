@@ -145,6 +145,63 @@ const translations: Translations = {
     en: "Unable to load prayer times. Please check your connection and try again.",
     ar: "تعذر تحميل أوقات الصلاة. يرجى التحقق من اتصالك والمحاولة مرة أخرى.",
   },
+  // Add missing translations
+  tomorrowFajr: {
+    en: "Tomorrow's Fajr",
+    ar: "فجر الغد",
+  },
+  unknownLocation: {
+    en: "Unknown Location",
+    ar: "موقع غير معروف",
+  },
+  january: {
+    en: "January",
+    ar: "يناير",
+  },
+  february: {
+    en: "February",
+    ar: "فبراير",
+  },
+  march: {
+    en: "March",
+    ar: "مارس",
+  },
+  april: {
+    en: "April",
+    ar: "أبريل",
+  },
+  may: {
+    en: "May",
+    ar: "مايو",
+  },
+  june: {
+    en: "June",
+    ar: "يونيو",
+  },
+  july: {
+    en: "July",
+    ar: "يوليو",
+  },
+  august: {
+    en: "August",
+    ar: "أغسطس",
+  },
+  september: {
+    en: "September",
+    ar: "سبتمبر",
+  },
+  october: {
+    en: "October",
+    ar: "أكتوبر",
+  },
+  november: {
+    en: "November",
+    ar: "نوفمبر",
+  },
+  december: {
+    en: "December",
+    ar: "ديسمبر",
+  },
 }
 
 interface LanguageContextType {
