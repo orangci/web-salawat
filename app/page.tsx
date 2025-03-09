@@ -4,19 +4,57 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { Calendar } from "@/components/ui/calendar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { MapPin, CalendarIcon, Settings } from "lucide-react"
+import { MapPin, CalendarIcon, Settings, Moon, Sun, Globe } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { format, addMinutes, addDays } from "date-fns"
 import { cn } from "@/lib/utils"
-import { ThemeSelector } from "@/components/theme-selector"
-import { LanguageSelector } from "@/components/language-selector"
-import { LocationSearch } from "@/components/location-search"
 import { useTheme } from "@/contexts/theme-context"
 import { useLanguage } from "@/contexts/language-context"
+import LocationSearch from "@/components/location-search"
+
+// Helper function to convert numbers to Arabic numerals when in Arabic mode
+const convertToLocaleDigits = (number: number | string, language: string): string => {
+  if (language !== "ar") return String(number)
+
+  const digits = String(number).split("")
+  const arabicDigits: Record<string, string> = {
+    "0": "٠",
+    "1": "١",
+    "2": "٢",
+    "3": "٣",
+    "4": "٤",
+    "5": "٥",
+    "6": "٦",
+    "7": "٧",
+    "8": "٨",
+    "9": "٩",
+  }
+
+  return digits.map((digit) => arabicDigits[digit] || digit).join("")
+}
+
+// Get month name from the language context
+const getMonthName = (monthIndex: number, t: (key: string) => string): string => {
+  const months = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ]
+  return t(months[monthIndex])
+}
 
 export default function Home() {
-  const { theme } = useTheme()
-  const { t, language, dir } = useLanguage()
+  const { theme, setTheme } = useTheme()
+  const { t, language, setLanguage, dir } = useLanguage()
   const [date, setDate] = useState<Date>(new Date())
   const [location, setLocation] = useState<{ lat: number; lng: number; timezone?: string } | null>(null)
   const [locationName, setLocationName] = useState<string>("")
@@ -29,7 +67,7 @@ export default function Home() {
   const [hoveredPrayer, setHoveredPrayer] = useState<string | null>(null)
   const [hoveredCountdown, setHoveredCountdown] = useState<string>("")
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
-  const [locationChanged, setLocationChanged] = useState(0) // Counter to force re-renders
+  const [locationTimezone, setLocationTimezone] = useState<string | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const locationRef = useRef<{ lat: number; lng: number; timezone?: string } | null>(null)
 
@@ -57,8 +95,8 @@ export default function Home() {
               intervalRef.current = null
             }
 
-            setLocation({ lat: latitude, lng: longitude, timezone: tzResponse.zoneName })
-            setLocationChanged((prev) => prev + 1) // Force re-render
+            setLocationTimezone(tzResponse.zoneName)
+            setLocation({ lat: latitude, lng: longitude })
 
             // Get location name from coordinates
             const response = await fetch(
@@ -74,7 +112,7 @@ export default function Home() {
           } catch (error) {
             console.error("Error fetching location data:", error)
             setLocation({ lat: latitude, lng: longitude })
-            setLocationName("Unknown Location")
+            setLocationName(t("unknownLocation"))
           }
         },
         async (error) => {
@@ -87,7 +125,7 @@ export default function Home() {
       // Fallback to IP-based location if geolocation is not supported
       getIPLocation()
     }
-  }, [])
+  }, [t])
 
   // Get location from IP address
   const getIPLocation = useCallback(async () => {
@@ -101,16 +139,16 @@ export default function Home() {
         intervalRef.current = null
       }
 
-      setLocation({ lat: data.latitude, lng: data.longitude, timezone: data.timezone })
-      setLocationChanged((prev) => prev + 1) // Force re-render
+      setLocationTimezone(data.timezone)
+      setLocation({ lat: data.latitude, lng: data.longitude })
       setLocationName(`${data.city}, ${data.region}, ${data.country_name}`)
     } catch (error) {
       console.error("Error getting IP location:", error)
-      setLocationName("Unknown Location")
+      setLocationName(t("unknownLocation"))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   // Handle location selection from search
   const handleLocationSelect = useCallback(async (selectedLocation: { lat: number; lng: number; name: string }) => {
@@ -127,17 +165,16 @@ export default function Home() {
       }
 
       // Reset states related to prayer times
+      setPrayerTimes(null)
       setUpcomingPrayer("")
       setCountdown("")
-      setPrayerTimes(null)
 
-      // Update location
+      // Important: Set timezone before setting location
+      setLocationTimezone(tzResponse.zoneName)
       setLocation({
         lat: selectedLocation.lat,
         lng: selectedLocation.lng,
-        timezone: tzResponse.zoneName,
       })
-      setLocationChanged((prev) => prev + 1) // Force re-render
       setLocationName(selectedLocation.name)
     } catch (error) {
       console.error("Error getting timezone for location:", error)
@@ -191,17 +228,16 @@ export default function Home() {
 
   // Get current time adjusted for selected location's timezone
   const getLocationAdjustedTime = useCallback(() => {
-    const loc = locationRef.current
-    if (!loc?.timezone) return new Date()
+    if (!locationTimezone) return new Date()
 
     try {
       const now = new Date()
 
       // Get current time components in the location's timezone
-      const options = { timeZone: loc.timezone, hour12: false } as Intl.DateTimeFormatOptions
+      const options = { timeZone: locationTimezone, hour12: false } as Intl.DateTimeFormatOptions
       const timeString = now.toLocaleTimeString("en-US", options)
       const dateString = now.toLocaleDateString("en-US", {
-        timeZone: loc.timezone,
+        timeZone: locationTimezone,
         year: "numeric",
         month: "numeric",
         day: "numeric",
@@ -219,15 +255,19 @@ export default function Home() {
       console.error("Error adjusting time for location:", error)
       return new Date()
     }
-  }, [])
+  }, [locationTimezone])
 
   // Format countdown time from difference in milliseconds
   const formatCountdown = (diffMs: number) => {
-    if (diffMs <= 0) return "00:00:00"
+    if (diffMs <= 0) return language === "ar" ? "٠٠:٠٠:٠٠" : "00:00:00"
 
     const hours = Math.floor(diffMs / (1000 * 60 * 60))
     const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
     const seconds = Math.floor((diffMs % (1000 * 60)) / 1000)
+
+    if (language === "ar") {
+      return `${convertToLocaleDigits(hours.toString().padStart(2, "0"), language)}:${convertToLocaleDigits(minutes.toString().padStart(2, "0"), language)}:${convertToLocaleDigits(seconds.toString().padStart(2, "0"), language)}`
+    }
 
     return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
   }
@@ -235,7 +275,7 @@ export default function Home() {
   // Calculate countdown to a specific prayer
   const calculateCountdownToPrayer = useCallback(
     (prayer: string, isIqama = false) => {
-      if (!prayerTimes || !prayerTimes.timings) return "00:00:00"
+      if (!prayerTimes || !prayerTimes.timings) return language === "ar" ? "٠٠:٠٠:٠٠" : "00:00:00"
 
       const now = getLocationAdjustedTime()
       const [hours, minutes] = prayerTimes.timings[prayer].split(":").map(Number)
@@ -257,7 +297,7 @@ export default function Home() {
       const diffMs = prayerTime.getTime() - now.getTime()
       return formatCountdown(diffMs)
     },
-    [prayerTimes, getLocationAdjustedTime],
+    [prayerTimes, getLocationAdjustedTime, language],
   )
 
   // Determine upcoming prayer and update countdown
@@ -348,7 +388,7 @@ export default function Home() {
     if (location) {
       fetchPrayerTimes()
     }
-  }, [location, date, fetchPrayerTimes, locationChanged])
+  }, [location, date, fetchPrayerTimes])
 
   // Update upcoming prayer and countdown every second
   useEffect(() => {
@@ -372,25 +412,38 @@ export default function Home() {
         clearInterval(intervalRef.current)
       }
     }
-  }, [prayerTimes, updateUpcomingPrayerAndCountdown, location, locationChanged])
+  }, [prayerTimes, updateUpcomingPrayerAndCountdown, locationTimezone])
 
   const formatDate = (date: Date, hijriDate: any) => {
-    // Format Gregorian date: 8th March 2025
-    const gregorianDate = format(date, "do MMMM yyyy")
+    if (language === "ar") {
+      // Arabic format
+      const hijriDay = convertToLocaleDigits(hijriDate.day, language)
+      const hijriYear = convertToLocaleDigits(hijriDate.year, language)
+      const hijriMonth = hijriDate.month.ar || hijriDate.month.en
 
-    // Format Hijri date: 8th Ramaḍān 1446 AH
-    // Add ordinal suffix to the day
-    const hijriDay = `${hijriDate.day}${getOrdinalSuffix(hijriDate.day)}`
-    const hijriMonth = hijriDate.month.en
-    const hijriYear = hijriDate.year
-    const hijriDateStr = `${hijriDay} ${hijriMonth} ${hijriYear} AH`
+      const gregorianDay = convertToLocaleDigits(date.getDate(), language)
+      const gregorianYear = convertToLocaleDigits(date.getFullYear(), language)
+      const gregorianMonth = getMonthName(date.getMonth(), t)
 
-    // Combine with em dash
-    return (
-      <div className="flex flex-col">
-        <span>{`${gregorianDate} — ${hijriDateStr}`}</span>
-      </div>
-    )
+      return (
+        <div className="flex flex-col">
+          <span>{`${gregorianDay} ${gregorianMonth} ${gregorianYear} — ${hijriDay} ${hijriMonth} ${hijriYear} هـ`}</span>
+        </div>
+      )
+    } else {
+      // English format
+      const gregorianDate = format(date, "do MMMM yyyy")
+      const hijriDay = `${hijriDate.day}${getOrdinalSuffix(hijriDate.day)}`
+      const hijriMonth = hijriDate.month.en
+      const hijriYear = hijriDate.year
+      const hijriDateStr = `${hijriDay} ${hijriMonth} ${hijriYear} AH`
+
+      return (
+        <div className="flex flex-col">
+          <span>{`${gregorianDate} — ${hijriDateStr}`}</span>
+        </div>
+      )
+    }
   }
 
   const getOrdinalSuffix = (day: number) => {
@@ -436,6 +489,16 @@ export default function Home() {
     setIsDatePickerOpen(!isDatePickerOpen)
   }
 
+  // Toggle language
+  const toggleLanguage = () => {
+    setLanguage(language === "en" ? "ar" : "en")
+  }
+
+  // Toggle theme
+  const toggleTheme = () => {
+    setTheme(theme === "dark" ? "light" : "dark")
+  }
+
   return (
     <main
       className="min-h-screen p-4 md:p-8 flex flex-col"
@@ -448,8 +511,12 @@ export default function Home() {
             {t("appTitle")}
           </h1>
           <div className="flex items-center gap-2">
-            <LanguageSelector />
-            <ThemeSelector />
+            <Button variant="ghost" size="icon" onClick={toggleLanguage}>
+              <Globe className="h-5 w-5" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={toggleTheme}>
+              {theme === "dark" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
+            </Button>
             <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
               <DialogTrigger asChild>
                 <Button variant="ghost" size="icon">
@@ -462,12 +529,14 @@ export default function Home() {
                   color: "var(--card-foreground)",
                   borderColor: "var(--border)",
                 }}
+                className="sm:max-w-[425px]"
               >
                 <DialogHeader>
                   <DialogTitle style={{ color: "var(--primary)" }}>{t("settings")}</DialogTitle>
                 </DialogHeader>
                 <div className="flex flex-col gap-4 mt-4">
                   <div className="flex flex-col gap-2">
+                    <label className="text-sm">{t("location")}</label>
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4" />
                       {locationName || t("detectingLocation")}
@@ -484,6 +553,8 @@ export default function Home() {
                   </div>
 
                   <div className="flex flex-col gap-2">
+                    <label className="text-sm">{t("date")}</label>
+
                     {/* Date picker button */}
                     <Button
                       variant="outline"
@@ -491,34 +562,34 @@ export default function Home() {
                       style={{ backgroundColor: "var(--input)", borderColor: "var(--border)" }}
                       onClick={toggleDatePicker}
                     >
-                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      <CalendarIcon className={`h-4 w-4 ${dir === "rtl" ? "ml-2" : "mr-2"}`} />
                       {date ? format(date, "PPP") : <span>{t("pickDate")}</span>}
                     </Button>
-
-                    {/* Date picker dialog */}
-                    {isDatePickerOpen && (
-                      <Dialog open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
-                        <DialogContent
-                          className="p-0 max-w-fit"
-                          style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}
-                        >
-                          <Calendar
-                            mode="single"
-                            selected={date}
-                            onSelect={handleDateChange}
-                            initialFocus
-                            className="rounded-md border p-3"
-                            style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}
-                          />
-                        </DialogContent>
-                      </Dialog>
-                    )}
                   </div>
                 </div>
               </DialogContent>
             </Dialog>
           </div>
         </div>
+
+        {/* Date picker dialog */}
+        {isDatePickerOpen && (
+          <Dialog open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
+            <DialogContent
+              className="p-0 max-w-fit"
+              style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}
+            >
+              <Calendar
+                mode="single"
+                selected={date}
+                onSelect={handleDateChange}
+                initialFocus
+                className="rounded-md border p-3"
+                style={{ backgroundColor: "var(--card)", borderColor: "var(--border)" }}
+              />
+            </DialogContent>
+          </Dialog>
+        )}
 
         {/* Countdown to Next Prayer */}
         {prayerTimes && !loading && (
@@ -597,7 +668,12 @@ export default function Home() {
                             {t("adhan")}
                           </p>
                           <p className="text-base font-medium" style={{ color: "var(--secondary)" }}>
-                            {prayerTimes.timings[prayer]}
+                            {language === "ar"
+                              ? prayerTimes.timings[prayer]
+                                  .split(":")
+                                  .map((part) => convertToLocaleDigits(part, language))
+                                  .join(":")
+                              : prayerTimes.timings[prayer]}
                           </p>
                         </div>
                         <div className="text-right">
@@ -608,7 +684,13 @@ export default function Home() {
                             className="text-base font-medium"
                             style={{ color: theme === "light" ? "#40a02b" : "#a6e3a1" }}
                           >
-                            {prayerTimes.timings[prayer] && format(calculateIqamaTimes(prayerTimes)[prayer], "HH:mm")}
+                            {prayerTimes.timings[prayer] &&
+                              (language === "ar"
+                                ? format(calculateIqamaTimes(prayerTimes)[prayer], "HH:mm")
+                                    .split(":")
+                                    .map((part) => convertToLocaleDigits(part, language))
+                                    .join(":")
+                                : format(calculateIqamaTimes(prayerTimes)[prayer], "HH:mm"))}
                           </p>
                         </div>
                       </div>
